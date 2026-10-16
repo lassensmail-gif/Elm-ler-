@@ -1,0 +1,289 @@
+type: custom:button-card
+show_name: false
+show_icon: false
+styles:
+  card:
+    - padding: 18px 14px 14px 14px
+    - background: 'linear-gradient(180deg, #d8dbe0 0%, #c4c8cf 60%, #b2b7be 100%)'
+    - border-radius: 16px
+    - border: 3px solid
+    - box-shadow: >-
+        inset 0 2px 4px rgba(255,255,255,0.7), inset 0 -3px 6px
+        rgba(0,0,0,0.35), 0 8px 18px rgba(0,0,0,0.5)
+    - color: '#111'
+  grid:
+    - grid-template-areas: '"header" "counter" "disk" "spec"'
+    - grid-template-rows: auto auto auto auto
+    - row-gap: 12px
+custom_fields:
+  header:
+    card:
+      type: custom:button-card
+      show_name: false
+      show_icon: false
+      styles:
+        card:
+          - background: transparent
+          - border: none
+          - box-shadow: none
+          - padding: 0
+        grid:
+          - grid-template-areas: '"prev time next"'
+          - grid-template-columns: 36px 1fr 36px
+          - align-items: center
+      custom_fields:
+        prev:
+          card:
+            type: custom:button-card
+            icon: mdi:chevron-left
+            styles:
+              card:
+                - width: 34px
+                - height: 34px
+                - border-radius: 50%
+                - background: 'linear-gradient(145deg, #e4e7eb, #b8bcc2)'
+                - border: 1px solid
+                - box-shadow: >-
+                    2px 2px 4px rgba(0,0,0,0.25), inset 1px 1px 2px
+                    rgba(255,255,255,0.8)
+              icon:
+                - color: '#2c3038'
+                - width: 22px
+            tap_action:
+              action: call-service
+              service: input_number.decrement
+              target:
+                entity_id: input_number.elpris_time_offset
+        time: |
+          [[[
+            let offset = parseInt(states['input_number.elpris_time_offset']?.state, 10);
+            if (isNaN(offset)) offset = 0;
+            
+            const d = new Date();
+            d.setHours(d.getHours() + offset);
+            const startH = String(d.getHours()).padStart(2, '0') + ':00';
+            const endD = new Date(d);
+            endD.setHours(d.getHours() + 1);
+            const endH = String(endD.getHours()).padStart(2, '0') + ':00';
+            
+            const now = new Date();
+            let dayLabel = '';
+            if (d.getDate() !== now.getDate() || d.getMonth() !== now.getMonth()) {
+              const days = ['SØN', 'MAN', 'TIR', 'ONS', 'TOR', 'FRE', 'LØR'];
+              dayLabel = days[d.getDay()] + ' ';
+            }
+
+            let badge = 'LIGE NU';
+            if (offset > 0) badge = `+${offset} T`;
+            if (offset < 0) badge = `${offset} T`;
+
+            return `
+              <div style="text-align: center; font-family: 'Courier New', monospace; font-size: 13px; font-weight: 800; color: #222; text-transform: uppercase; letter-spacing: 0.5px;">
+                ${dayLabel}KL. ${startH} – ${endH} 
+                <span style="color: ${offset === 0 ? '#b32400' : '#555'}; font-size: 11px;">(${badge})</span>
+              </div>
+            `;
+          ]]]
+        next:
+          card:
+            type: custom:button-card
+            icon: mdi:chevron-right
+            styles:
+              card:
+                - width: 34px
+                - height: 34px
+                - border-radius: 50%
+                - background: 'linear-gradient(145deg, #e4e7eb, #b8bcc2)'
+                - border: 1px solid
+                - box-shadow: >-
+                    2px 2px 4px rgba(0,0,0,0.25), inset 1px 1px 2px
+                    rgba(255,255,255,0.8)
+              icon:
+                - color: '#2c3038'
+                - width: 22px
+            tap_action:
+              action: call-service
+              service: input_number.increment
+              target:
+                entity_id: input_number.elpris_time_offset
+  counter: |
+    [[[
+      let offset = parseInt(states['input_number.elpris_time_offset']?.state, 10);
+      if (isNaN(offset)) offset = 0;
+
+      const todayPrices = states['sensor.stromligning_current_price_vat']?.attributes?.prices || [];
+      const tomorrowPrices = states['binary_sensor.stromligning_tomorrow_available_vat']?.attributes?.prices || [];
+      
+      let combined = [];
+      if (Array.isArray(todayPrices)) combined = combined.concat(todayPrices);
+      if (Array.isArray(tomorrowPrices)) combined = combined.concat(tomorrowPrices);
+
+      const target = new Date();
+      target.setHours(target.getHours() + offset, 30, 0, 0);
+      const targetTs = target.getTime();
+
+      let priceVal = null;
+      let dayVals = [];
+
+      combined.forEach(item => {
+        const rawStart = item.start || item.from || item.time || item.datetime;
+        const rawEnd = item.end || item.to;
+        if (!rawStart) return;
+
+        const tStart = new Date(rawStart).getTime();
+        const tEnd = rawEnd ? new Date(rawEnd).getTime() : (tStart + 3600000);
+        const p = item.price !== undefined ? parseFloat(item.price) : parseFloat(item.value);
+
+        if (!isNaN(p)) dayVals.push(p);
+        if (targetTs >= tStart && targetTs < tEnd) {
+          priceVal = p;
+        }
+      });
+
+      if (priceVal === null && offset === 0) {
+        const s = states['sensor.stromligning_current_price_vat'];
+        if (s && !isNaN(parseFloat(s.state))) {
+          priceVal = parseFloat(s.state);
+        }
+      }
+
+      const pStr = (priceVal !== null && !isNaN(priceVal)) ? priceVal.toFixed(2) : '0.00';
+      const parts = pStr.split('.');
+      const wholeStr = parts[0].padStart(3, '0');
+      const dec1 = parts[1][0] || '0';
+      const dec2 = parts[1][1] || '0';
+
+      const drumStyle = `
+        display: inline-block;
+        width: 38px;
+        height: 52px;
+        line-height: 52px;
+        background: linear-gradient(180deg, #111 0%, #3a3a3a 45%, #151515 55%, #050505 100%);
+        color: #f0f0f0;
+        font-family: 'Courier New', 'Lucida Console', monospace;
+        font-size: 38px;
+        font-weight: 900;
+        text-align: center;
+        border-radius: 4px;
+        box-shadow: inset 0 6px 6px rgba(0,0,0,0.8), inset 0 -6px 6px rgba(0,0,0,0.8), 0 1px 2px rgba(255,255,255,0.4);
+        border: 1px solid #111;
+        margin: 0 2px;
+      `;
+
+      const decDrumStyle = `
+        ${drumStyle}
+        background: linear-gradient(180deg, #600b08 0%, #b8221b 45%, #600b08 55%, #380000 100%);
+        color: #fff;
+      `;
+
+      return `
+        <div style="background: #1e2229; padding: 8px 10px; border-radius: 8px; border: 2px solid #0f1114; box-shadow: inset 0 3px 6px rgba(0,0,0,0.7), 0 1px 1px rgba(255,255,255,0.6); display: flex; justify-content: center; align-items: center;">
+          <div style="${drumStyle}">${wholeStr[0]}</div>
+          <div style="${drumStyle}">${wholeStr[1]}</div>
+          <div style="${drumStyle}">${wholeStr[2]}</div>
+          <div style="font-size: 32px; font-weight: 900; color: #fff; margin: 0 1px; padding-top: 14px;">,</div>
+          <div style="${decDrumStyle}">${dec1}</div>
+          <div style="${decDrumStyle}">${dec2}</div>
+        </div>
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 6px 0 6px;">
+          <span style="font-family: 'Arial Black', sans-serif; font-size: 10px; color: #333; border: 1.5px solid #333; padding: 1px 5px; border-radius: 10px; letter-spacing: 0.5px;">LANDIS & GYR</span>
+          <span style="font-family: -apple-system, sans-serif; font-size: 15px; font-weight: 900; color: #111; letter-spacing: 1px;">kr / kWh</span>
+        </div>
+      `;
+    ]]]
+  disk: |
+    [[[
+      let offset = parseInt(states['input_number.elpris_time_offset']?.state, 10);
+      if (isNaN(offset)) offset = 0;
+
+      const todayPrices = states['sensor.stromligning_current_price_vat']?.attributes?.prices || [];
+      const tomorrowPrices = states['binary_sensor.stromligning_tomorrow_available_vat']?.attributes?.prices || [];
+      
+      let combined = [];
+      if (Array.isArray(todayPrices)) combined = combined.concat(todayPrices);
+      if (Array.isArray(tomorrowPrices)) combined = combined.concat(tomorrowPrices);
+
+      const target = new Date();
+      target.setHours(target.getHours() + offset, 30, 0, 0);
+      const targetTs = target.getTime();
+
+      let priceVal = null;
+      combined.forEach(item => {
+        const rawStart = item.start || item.from || item.time || item.datetime;
+        const rawEnd = item.end || item.to;
+        if (!rawStart) return;
+
+        const tStart = new Date(rawStart).getTime();
+        const tEnd = rawEnd ? new Date(rawEnd).getTime() : (tStart + 3600000);
+        const p = item.price !== undefined ? parseFloat(item.price) : parseFloat(item.value);
+
+        if (targetTs >= tStart && targetTs < tEnd) {
+          priceVal = p;
+        }
+      });
+
+      if (priceVal === null && offset === 0) {
+        const s = states['sensor.stromligning_current_price_vat'];
+        if (s && !isNaN(parseFloat(s.state))) {
+          priceVal = parseFloat(s.state);
+        }
+      }
+
+      // Beregn omløbshastighed i sekunder ud fra pris
+      let duration = 3.0;
+      if (priceVal !== null && !isNaN(priceVal)) {
+        const clampedPrice = Math.max(0.1, Math.min(priceVal, 4.5));
+        duration = (8.5 - (clampedPrice * 1.7)).toFixed(2);
+        if (duration < 0.6) duration = 0.6;
+      }
+
+      return `
+        <style>
+          @keyframes meterDiskSpin {
+            0% {
+              left: -10px;
+              opacity: 0;
+            }
+            15% {
+              opacity: 1;
+            }
+            85% {
+              opacity: 1;
+            }
+            100% {
+              left: calc(100% + 10px);
+              opacity: 0;
+            }
+          }
+        </style>
+        <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin: 2px 0;">
+          <div style="font-size: 18px; font-weight: 900; color: #222;">➔</div>
+          <div style="position: relative; width: 68%; height: 18px; background: #0c0d10; border-radius: 9px; border: 2px solid #5a5f6b; box-shadow: inset 0 3px 5px rgba(0,0,0,0.9), 0 1px 1px rgba(255,255,255,0.7); overflow: hidden; display: flex; align-items: center;">
+            <div style="width: 100%; height: 6px; background: linear-gradient(90deg, #444 0%, #bbb 25%, #eee 50%, #bbb 75%, #444 100%); box-shadow: 0 0 3px rgba(0,0,0,0.8);"></div>
+            <div style="position: absolute; width: 8px; height: 12px; background: #c01818; border-radius: 1px; box-shadow: 0 0 2px rgba(0,0,0,0.8); animation: meterDiskSpin ${duration}s linear infinite;"></div>
+          </div>
+          <div style="font-size: 18px; font-weight: 900; color: #222;">➔</div>
+        </div>
+      `;
+    ]]]
+  spec: |
+    [[[
+      return `
+        <div style="border: 1.5px solid #444; border-radius: 4px; background: rgba(255,255,255,0.25); font-family: 'Courier New', monospace; font-size: 10px; font-weight: 700; color: #1a1a1a;">
+          <div style="display: flex; border-bottom: 1px solid #555;">
+            <div style="flex: 1.2; padding: 2px 4px; border-right: 1px solid #555;">ML240f6</div>
+            <div style="flex: 1.5; padding: 2px 4px; border-right: 1px solid #555;">Nr. 6580893</div>
+            <div style="flex: 0.8; padding: 2px 4px;">50 Hz</div>
+          </div>
+          <div style="display: flex; border-bottom: 1px solid #555;">
+            <div style="flex: 1.2; padding: 2px 4px; border-right: 1px solid #555;">3×380 / 220 V</div>
+            <div style="flex: 1.5; padding: 2px 4px; border-right: 1px solid #555;">10(40) A</div>
+            <div style="flex: 0.8; padding: 2px 4px;">1978</div>
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between; padding: 4px 6px; background: rgba(0,0,0,0.06);">
+            <div style="display: inline-block; background: #dadfe5; border: 1px solid #888; border-radius: 3px; padding: 1px 8px; font-weight: 900; font-size: 11px; letter-spacing: 2px; box-shadow: inset 0 1px 1px #fff;">SEAS</div>
+            <div style="font-size: 11px; letter-spacing: 1.5px; font-weight: 800;">187662</div>
+          </div>
+        </div>
+      `;
+    ]]]
